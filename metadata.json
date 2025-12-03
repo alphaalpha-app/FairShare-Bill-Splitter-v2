@@ -1,0 +1,5 @@
+{
+  "name": "FairShare: Bill Splitter v2",
+  "description": "A fair, offline-first PWA for splitting household utility bills based on actual stay dates.",
+  "requestFramePermissions": []
+}
