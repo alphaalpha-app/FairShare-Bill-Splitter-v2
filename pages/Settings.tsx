@@ -1,11 +1,13 @@
+
 import React, { useEffect, useState, useRef } from 'react';
 import { v4 as uuidv4 } from 'uuid';
-import { Trash2, Download, Upload, Save, X, Bot, Pencil, Check } from 'lucide-react';
+import { Trash2, Download, Upload, Save, X, Bot, Pencil, Check, LogOut, User, Server, Key } from 'lucide-react';
 import { db } from '../services/db';
-import { Tenant, AILog } from '../types';
+import { Tenant, AILog, AIModelProvider, UserSession } from '../types';
 import { COLORS } from '../constants';
 import CalendarSelector from '../components/CalendarSelector';
-import { format, parseISO, isValid } from 'date-fns';
+import { format } from 'date-fns';
+import { AuthService } from '../services/auth';
 
 export default function SettingsPage() {
   const [tenants, setTenants] = useState<Tenant[]>([]);
@@ -13,6 +15,15 @@ export default function SettingsPage() {
   const [isAdding, setIsAdding] = useState(false);
   const [newTenantName, setNewTenantName] = useState('');
   
+  // Auth State
+  const [session, setSession] = useState<UserSession | undefined>(undefined);
+  const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [authLoading, setAuthLoading] = useState(false);
+  const [apiUrl, setApiUrl] = useState(AuthService.getApiUrl());
+  const [selectedModel, setSelectedModel] = useState<AIModelProvider>('gemini');
+
   // For editing tenant name
   const [editingTenantId, setEditingTenantId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState('');
@@ -24,11 +35,56 @@ export default function SettingsPage() {
 
   useEffect(() => {
     loadData();
+    checkSession();
+    // Load saved model preference
+    const savedModel = localStorage.getItem('fairshare_ai_model') as AIModelProvider;
+    if (savedModel) setSelectedModel(savedModel);
   }, []);
 
   const loadData = async () => {
     setTenants(await db.getTenants());
     setAiLogs(await db.getAILogs());
+  };
+
+  const checkSession = async () => {
+    const s = await AuthService.getSession();
+    setSession(s);
+  };
+
+  const handleAuth = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthLoading(true);
+    try {
+      if (authMode === 'login') {
+        const s = await AuthService.login(username, password);
+        setSession(s);
+        setPassword('');
+      } else {
+        await AuthService.register(username, password);
+        alert('Registration successful! Please login.');
+        setAuthMode('login');
+      }
+    } catch (err: any) {
+      alert(err.message);
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    await AuthService.logout();
+    setSession(undefined);
+  };
+
+  const saveApiUrl = () => {
+    AuthService.setApiUrl(apiUrl);
+    alert('API URL updated');
+  };
+
+  const handleModelChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const m = e.target.value as AIModelProvider;
+    setSelectedModel(m);
+    localStorage.setItem('fairshare_ai_model', m);
   };
 
   const handleAddTenant = async () => {
@@ -101,16 +157,111 @@ export default function SettingsPage() {
       const updated = { ...selectedTenantForDates, defaultStayDates: dates };
       await db.saveTenant(updated);
       setTenants(tenants.map(t => t.id === updated.id ? updated : t));
-      setSelectedTenantForDates(updated); // keep selected to show update
+      setSelectedTenantForDates(updated); 
     }
   };
 
   return (
     <div className="space-y-8 pb-10">
-      {/* Header */}
       <header>
         <h1 className="text-2xl font-bold text-gray-800">Settings</h1>
       </header>
+
+      {/* Cloud & Auth Section */}
+      <section className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+        <div className="p-4 border-b border-gray-50 bg-gray-50 flex justify-between items-center">
+          <h2 className="text-sm font-semibold text-gray-700 flex items-center gap-2">
+            <User size={16} /> User Account
+          </h2>
+          {session && (
+             <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full">Logged In</span>
+          )}
+        </div>
+        
+        <div className="p-4">
+          {!session ? (
+            <form onSubmit={handleAuth} className="space-y-3">
+              <div className="flex gap-2 text-sm border-b pb-2 mb-2">
+                <button type="button" onClick={() => setAuthMode('login')} className={`font-medium ${authMode === 'login' ? 'text-blue-600' : 'text-gray-400'}`}>Login</button>
+                <div className="border-r border-gray-300 mx-1"></div>
+                <button type="button" onClick={() => setAuthMode('register')} className={`font-medium ${authMode === 'register' ? 'text-blue-600' : 'text-gray-400'}`}>Register</button>
+              </div>
+              <input 
+                type="text" placeholder="Username" required 
+                value={username} onChange={e => setUsername(e.target.value)}
+                className="w-full border rounded px-3 py-2 text-sm"
+              />
+              <input 
+                type="password" placeholder="Password" required 
+                value={password} onChange={e => setPassword(e.target.value)}
+                className="w-full border rounded px-3 py-2 text-sm"
+              />
+              <button 
+                type="submit" disabled={authLoading}
+                className="w-full bg-blue-600 text-white py-2 rounded text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
+              >
+                {authLoading ? 'Processing...' : (authMode === 'login' ? 'Login' : 'Create Account')}
+              </button>
+              <p className="text-xs text-gray-400 text-center">
+                 Login required to use AI scanning features.
+              </p>
+            </form>
+          ) : (
+            <div className="flex justify-between items-center">
+              <div>
+                <p className="font-medium text-gray-800">Hi, {session.username}</p>
+                <p className="text-xs text-gray-500">Session active</p>
+              </div>
+              <button onClick={handleLogout} className="text-red-500 hover:bg-red-50 p-2 rounded">
+                <LogOut size={18} />
+              </button>
+            </div>
+          )}
+        </div>
+      </section>
+
+      {/* AI Configuration */}
+      <section className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+        <div className="p-4 border-b border-gray-50 bg-gray-50">
+          <h2 className="text-sm font-semibold text-gray-700 flex items-center gap-2">
+            <Bot size={16} /> AI Configuration
+          </h2>
+        </div>
+        <div className="p-4 space-y-4">
+          <div>
+            <label className="block text-xs font-medium text-gray-500 mb-1">AI Model</label>
+            <select 
+              value={selectedModel} 
+              onChange={handleModelChange}
+              disabled={!session}
+              className="w-full border rounded px-3 py-2 text-sm bg-white"
+            >
+              <option value="gemini">Google Gemini 2.5 Flash (Fast)</option>
+              <option value="chatgpt">OpenAI ChatGPT (GPT-4o)</option>
+              <option value="grok">xAI Grok Beta</option>
+              <option value="deepseek">DeepSeek Chat</option>
+            </select>
+          </div>
+          
+          <div className="pt-2 border-t border-gray-100">
+             <label className="block text-xs font-medium text-gray-500 mb-1 flex items-center gap-1">
+               <Server size={12} /> Backend API URL
+             </label>
+             <div className="flex gap-2">
+               <input 
+                 type="text" 
+                 value={apiUrl}
+                 onChange={e => setApiUrl(e.target.value)}
+                 className="flex-grow border rounded px-2 py-1 text-xs text-gray-600"
+               />
+               <button onClick={saveApiUrl} className="text-xs bg-gray-100 px-2 rounded hover:bg-gray-200">Save</button>
+             </div>
+             <p className="text-[10px] text-gray-400 mt-1">
+               Point to your deployed Cloudflare Worker.
+             </p>
+          </div>
+        </div>
+      </section>
 
       {/* Tenants Section */}
       <section>
@@ -212,7 +363,7 @@ export default function SettingsPage() {
               <thead className="bg-gray-50 text-gray-500">
                 <tr>
                   <th className="p-2">Date</th>
-                  <th className="p-2">Type</th>
+                  <th className="p-2">Model</th>
                   <th className="p-2">Status</th>
                 </tr>
               </thead>
@@ -220,7 +371,7 @@ export default function SettingsPage() {
                 {aiLogs.map(log => (
                   <tr key={log.id} className="border-t border-gray-50">
                     <td className="p-2 text-gray-600">{format(new Date(log.timestamp), 'dd/MM/yy HH:mm')}</td>
-                    <td className="p-2 font-medium">{log.billType}</td>
+                    <td className="p-2 text-gray-500">{log.model || 'gemini'}</td>
                     <td className="p-2">
                       <span className={`px-1.5 py-0.5 rounded ${log.status === 'SUCCESS' ? 'bg-green-50 text-green-600' : 'bg-red-50 text-red-600'}`}>
                         {log.status}
@@ -234,12 +385,12 @@ export default function SettingsPage() {
         </div>
       </section>
 
-      {/* Default Stay Calendar Modal/Section */}
+      {/* Default Stay Calendar Modal */}
       {selectedTenantForDates && (
         <section className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
           <div 
             className="bg-white rounded-2xl w-full max-w-sm max-h-[90vh] overflow-y-auto flex flex-col shadow-2xl"
-            onClick={(e) => e.stopPropagation()} /* Prevent interaction with background */
+            onClick={(e) => e.stopPropagation()} 
           >
             <div className="p-4 border-b flex justify-between items-center sticky top-0 bg-white z-10">
               <h3 className="font-bold">Default Stays: {selectedTenantForDates.name}</h3>
@@ -253,7 +404,6 @@ export default function SettingsPage() {
                 Select usual stay days. These are pre-filled on new bills.
               </p>
 
-              {/* Calendar with Wide Range for Past/Future and Range Selection Enabled */}
               <CalendarSelector
                 color={selectedTenantForDates.color}
                 selectedDates={selectedTenantForDates.defaultStayDates || []}
@@ -261,15 +411,13 @@ export default function SettingsPage() {
                 enableRangeSelection={true}
                 periods={[{ 
                   id: 'default', 
-                  startDate: '2020-01-01', // Allow from 2020
-                  endDate: '2030-12-31',   // Allow to 2030
+                  startDate: '2020-01-01', 
+                  endDate: '2030-12-31', 
                   usageCost: 0 
                 }]}
               />
               <p className="text-xs text-center text-gray-400">
                 Tap "Select Range" to add multiple days at once.
-                <br />
-                Scroll to navigate months (2020-2030).
               </p>
             </div>
           </div>

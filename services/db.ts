@@ -1,8 +1,9 @@
-import { Bill, BillManualOverride, BillStays, Tenant, AILog } from '../types';
+
+import { Bill, BillManualOverride, BillStays, Tenant, AILog, UserSession } from '../types';
 import { v4 as uuidv4 } from 'uuid';
 
 const DB_NAME = 'FairShareDB';
-const DB_VERSION = 2; // Incremented for aiLogs
+const DB_VERSION = 3; // Incremented for session store
 
 export class DBService {
   private dbPromise: Promise<IDBDatabase>;
@@ -31,6 +32,10 @@ export class DBService {
         if (!db.objectStoreNames.contains('aiLogs')) {
           db.createObjectStore('aiLogs', { keyPath: 'id' });
         }
+        if (!db.objectStoreNames.contains('session')) {
+          // Singleton store for current user session, key always 'current'
+          db.createObjectStore('session', { keyPath: 'key' });
+        }
       };
     });
   }
@@ -38,6 +43,41 @@ export class DBService {
   private async getStore(storeName: string, mode: IDBTransactionMode) {
     const db = await this.dbPromise;
     return db.transaction(storeName, mode).objectStore(storeName);
+  }
+
+  // --- Auth Session ---
+  async setSession(session: UserSession): Promise<void> {
+    const store = await this.getStore('session', 'readwrite');
+    return new Promise((resolve, reject) => {
+      const req = store.put({ key: 'current', ...session });
+      req.onsuccess = () => resolve();
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  async getSession(): Promise<UserSession | undefined> {
+    const store = await this.getStore('session', 'readonly');
+    return new Promise((resolve, reject) => {
+      const req = store.get('current');
+      req.onsuccess = () => {
+        if (req.result) {
+          const { key, ...session } = req.result;
+          resolve(session as UserSession);
+        } else {
+          resolve(undefined);
+        }
+      };
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  async clearSession(): Promise<void> {
+    const store = await this.getStore('session', 'readwrite');
+    return new Promise((resolve, reject) => {
+      const req = store.delete('current');
+      req.onsuccess = () => resolve();
+      req.onerror = () => reject(req.error);
+    });
   }
 
   // Tenants
@@ -96,8 +136,7 @@ export class DBService {
     });
   }
 
-  // Stays (Deprecated mostly, but keeping for compatibility if needed, 
-  // though app logic will now prefer Tenant.defaultStayDates)
+  // Stays (Deprecated mostly)
   async getBillStays(billId: string): Promise<BillStays | undefined> {
     const store = await this.getStore('billStays', 'readonly');
     return new Promise((resolve, reject) => {
@@ -171,7 +210,7 @@ export class DBService {
     
     const aiLogs = await this.getAILogs();
 
-    return JSON.stringify({ tenants, bills, stays, overrides, aiLogs, version: 2 });
+    return JSON.stringify({ tenants, bills, stays, overrides, aiLogs, version: 3 });
   }
 
   async importData(json: string): Promise<void> {

@@ -1,7 +1,16 @@
+
 export enum BillType {
   ELECTRICITY = 'ELECTRICITY',
   GAS = 'GAS',
   WATER = 'WATER'
+}
+
+export type AIModelProvider = 'gemini' | 'chatgpt' | 'grok' | 'deepseek';
+
+export interface UserSession {
+  token: string;
+  username: string;
+  expiresAt: number;
 }
 
 export interface Period {
@@ -66,4 +75,5 @@ export interface AILog {
   billType: string;
   status: 'SUCCESS' | 'FAILED';
   details: string;
+  model?: string; // Track which model was used
 }
